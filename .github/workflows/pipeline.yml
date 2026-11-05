@@ -1,9 +1,59 @@
+# Nombre del workflow, tal como aparece en la pestaña Actions de GitHub.
 name: pipeline
+
+# Evento que dispara el workflow: cada vez que se abre o se actualiza una pull request.
 on: [pull_request]
+
+# Permisos del GITHUB_TOKEN que usa el workflow (se dan solo los necesarios).
+permissions:
+
+  # Solo lectura del código del repositorio.
+  contents: read
+
+  # Escritura en pull requests (Gitleaks la usa para comentar hallazgos en la PR).
+  pull-requests: write
+
+# Lista de trabajos (jobs) que ejecuta el workflow.
 jobs:
+
+  # Único job: verifica el código antes de permitir la fusión.
   verificar:
+
+    # Máquina virtual Linux, provista por GitHub, donde corren los pasos.
     runs-on: ubuntu-latest
+
+    # Pasos del job; se ejecutan en orden y, si uno falla, el job se detiene.
     steps:
-      - uses: actions/checkout@v4
+
+      # Descarga el código del repo. Se fija a un SHA de commit (no a un tag
+      # que puede cambiar) para evitar ataques de cadena de suministro.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+        # fetch-depth: 0 trae todo el historial para que Gitleaks revise todos los commits.
+        with: { fetch-depth: 0 }
+
+      # Instala las dependencias exactas de package-lock.json (instalación limpia y reproducible).
       - run: npm ci
+
+      # Corre los tests automatizados; si alguno falla, el pipeline falla.
       - run: npm test
+
+      # Busca vulnerabilidades conocidas en las dependencias; falla si hay alguna alta o crítica.
+      - run: npm audit --audit-level=high
+
+      # Instala Semgrep, una herramienta de análisis estático de código (SAST).
+      - run: pip install semgrep
+
+      # Analiza el código con las reglas recomendadas para el lenguaje detectado (--config auto);
+      # --error hace que el paso falle si encuentra problemas.
+      - run: semgrep scan --config auto --error
+
+      # Gitleaks busca secretos expuestos (claves, tokens, contraseñas) en el código y el historial.
+      # También fijado a un SHA de commit, igual que checkout.
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
+
+        # Variables de entorno que recibe la acción de Gitleaks.
+        env:
+
+          # Token que GitHub genera automáticamente para el workflow; Gitleaks lo usa para leer la PR.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
